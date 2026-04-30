@@ -1,0 +1,27 @@
+# permissions for end users to edit knowledgebases.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-kb
+    app.kubernetes.io/managed-by: kustomize
+  name: knowledgebase-editor-role
+rules:
+- apiGroups:
+  - kb.kubekb.io
+  resources:
+  - knowledgebases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - kb.kubekb.io
+  resources:
+  - knowledgebases/status
+  verbs:
+  - get

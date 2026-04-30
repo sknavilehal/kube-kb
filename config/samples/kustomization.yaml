@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- kb_v1alpha1_knowledgebase.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

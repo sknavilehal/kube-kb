@@ -1,0 +1,9 @@
+apiVersion: kb.kubekb.io/v1alpha1
+kind: KnowledgeBase
+metadata:
+  labels:
+    app.kubernetes.io/name: kube-kb
+    app.kubernetes.io/managed-by: kustomize
+  name: knowledgebase-sample
+spec:
+  # TODO(user): Add fields here
