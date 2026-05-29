@@ -1,0 +1,13 @@
+github_repo: "https://github.com/myorg/docs"
+github_branch: "main"
+# github_token: ""  # uncomment for private repos; or set GITHUB_TOKEN env var
+
+ollama_base_url: "http://localhost:11434"
+llm_model: "phi3"
+embedding_model: "nomic-embed-text"
+
+postgres_dsn: "postgresql://kube_kb:kube_kb@localhost:5432/kube_kb"
+
+chunk_size: 1024
+chunk_overlap: 200
+top_k: 5
