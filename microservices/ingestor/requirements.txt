@@ -1,0 +1,7 @@
+GitPython
+langchain-community
+langchain-ollama
+langchain-postgres
+langchain-text-splitters
+psycopg[binary]
+python-dotenv

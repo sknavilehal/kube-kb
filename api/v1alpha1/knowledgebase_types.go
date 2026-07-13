@@ -20,28 +20,49 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // KnowledgeBaseSpec defines the desired state of KnowledgeBase
 type KnowledgeBaseSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	InferenceServer InferenceServerSpec `json:"inferenceServer,omitempty"`
+	VectorDB        VectorDBSpec        `json:"vectorDB,omitempty"`
+	GitHubRepo      string              `json:"githubRepo,omitempty"`
+	GitHubBranch    string              `json:"githubBranch,omitempty"`
+}
 
-	// Foo is an example field of KnowledgeBase. Edit knowledgebase_types.go to remove/update
-	Foo string `json:"foo,omitempty"`
+type InferenceServerSpec struct {
+	// +kubebuilder:validation:Enum=ollama;openai;anthropic
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
+type VectorDBSpec struct {
+	// +kubebuilder:validation:Enum=pgvector;aws-rds
+	Provider string `json:"provider,omitempty"`
+	Storage  string `json:"storage,omitempty"`
 }
 
 // KnowledgeBaseStatus defines the observed state of KnowledgeBase
 type KnowledgeBaseStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	Phase             KnowledgeBasePhase `json:"phase,omitempty"`
+	ObservedGitCommit string             `json:"observedGitCommit,omitempty"`
 
-	Bar string `json:"bar,omitempty"`
+	// +listType=map
+	// +listMapKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
+
+type KnowledgeBasePhase string
+
+const (
+	PhasePending   KnowledgeBasePhase = "Pending"
+	PhaseReady     KnowledgeBasePhase = "Ready"
+	PhaseIngesting KnowledgeBasePhase = "Ingesting"
+	PhaseFailed    KnowledgeBasePhase = "Failed"
+)
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // KnowledgeBase is the Schema for the knowledgebases API
 type KnowledgeBase struct {

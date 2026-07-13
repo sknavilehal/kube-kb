@@ -4,4 +4,11 @@ metadata:
   name: knowledgebase-sample
   namespace: default
 spec:
-  foo: "hello-world"
+  inferenceServer:
+    provider: ollama
+    model: llama3.2:3b
+  vectorDB:
+    provider: pgvector
+    storage: 10Gi
+  githubRepo: https://github.com/kubekb/kubekb
+  githubBranch: main
