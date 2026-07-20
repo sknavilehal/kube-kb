@@ -158,13 +158,19 @@ func (r *KnowledgeBaseReconciler) buildISDeployment(kb *kbv1alpha1.KnowledgeBase
 						{
 							Name:  "ollama-init",
 							Image: "ollama/ollama:latest",
-						Command: []string{
-							"sh", "-c",
-							"ollama pull " + kb.Spec.InferenceServer.Model,
+							Command: []string{
+								"sh", "-c",
+								"ollama serve & until ollama list > /dev/null 2>&1; do sleep 1; done && ollama pull " + kb.Spec.InferenceServer.Model,
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "model-cache",
+									MountPath: "/root/.ollama",
+								},
+							},
 						},
 					},
-				},
-				Containers: []corev1.Container{
+					Containers: []corev1.Container{
 						{
 							Name:  "ollama",
 							Image: "ollama/ollama:latest",
