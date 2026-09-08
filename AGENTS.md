@@ -68,7 +68,7 @@ KUBEBUILDER_ASSETS="$(./bin/setup-envtest use 1.30.0 --bin-dir ./bin -p path)" \
   go test ./internal/controller/... -v -run TestControllers
 ```
 
-Tests use Ginkgo v2 + Gomega. The suite reads CRD YAML from `../../config/crd/bases/` (relative to the test file), so `make manifests` must have been run first.
+Tests use Ginkgo v2 + Gomega. The suite reads CRD YAML from `../../config/crd/bases/` (relative to the test file), so `make manifests` must have been /modelsrun first.
 
 ### End-to-end tests
 
@@ -100,7 +100,7 @@ cmd/main.go                          # Manager entrypoint
 api/v1alpha1/knowledgebase_types.go  # CRD schema (edit here for new fields)
 internal/controller/knowledgebase_controller.go  # Reconcile loop
 config/samples/kb_v1alpha1_knowledgebase.yaml    # Example CR (note: sample still has stale scaffold field spec.foo)
-poc/ingestor/ingest.py               # Python PoC pipeline (LangChain + pgvector + Ollama)
+microservices/ingestor/ingest.py               # Python PoC pipeline (LangChain + pgvector + Ollama)
 docs/ARCHITECTURE.md                 # Component diagram and provider design
 ```
 
@@ -117,11 +117,11 @@ docs/ARCHITECTURE.md                 # Component diagram and provider design
 ```bash
 cd poc && docker-compose up -d          # starts pgvector (pg16)
 pip install -r poc/requirements.txt     # Python 3.10+ required (uses str | None syntax)
-python poc/ingestor/ingest.py           # reads poc/config.yaml
+python microservices/ingestor/ingest.py           # reads poc/config.yaml
 GITHUB_TOKEN=<token> python poc/ingestor/ingest.py  # for private repos
 ```
 
-`poc/ollama/` and `poc/retriever/` are empty stubs — not yet implemented.
+`microservices/ollama/` and `microservices/retriever/` are empty stubs — not yet implemented.
 
 ---
 

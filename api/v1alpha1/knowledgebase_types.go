@@ -26,6 +26,9 @@ type KnowledgeBaseSpec struct {
 	VectorDB        VectorDBSpec        `json:"vectorDB,omitempty"`
 	GitHubRepo      string              `json:"githubRepo,omitempty"`
 	GitHubBranch    string              `json:"githubBranch,omitempty"`
+	// GitHubTokenSecret is the name of a Secret in the same namespace whose
+	// "token" key holds a GitHub personal access token (for private repos).
+	GitHubTokenSecret string `json:"githubTokenSecret,omitempty"`
 }
 
 type InferenceServerSpec struct {

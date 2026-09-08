@@ -21,15 +21,10 @@ import (
 	"context"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	kbv1alpha1 "github.com/sknavilehal/kube-kb/api/v1alpha1"
@@ -47,6 +42,13 @@ type KnowledgeBaseReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
+
+const (
+	labelApp         = "app"
+	pgvectorProvider = "pgvector"
+)
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -55,7 +57,7 @@ type KnowledgeBaseReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/reconcile
 func (r *KnowledgeBaseReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("knowledgebase", req.NamespacedName)
-	logger.Info("Hello from KubeKB!", "resource", req.NamespacedName)
+	logger.Info("Reconciling KnowledgeBase", "resource", req.NamespacedName)
 
 	kb := kbv1alpha1.KnowledgeBase{}
 	if err := r.Get(ctx, req.NamespacedName, &kb); err != nil {
@@ -67,7 +69,6 @@ func (r *KnowledgeBaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("=== Hello World: Reconciling KnowledgeBase ===")
 	logger.Info("Metadata", "name", kb.Name, "namespace", kb.Namespace, "creationTimestamp", kb.CreationTimestamp)
 	logger.Info("Spec",
 		"inferenceServer.provider", kb.Spec.InferenceServer.Provider,
@@ -88,284 +89,48 @@ func (r *KnowledgeBaseReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.reconcileVectorDB(ctx, &kb); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.reconcileRetriever(ctx, &kb); err != nil {
+		return ctrl.Result{}, err
+	}
 
-	return ctrl.Result{}, nil
+	if err := r.updatePhase(ctx, &kb); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return r.reconcileIngestion(ctx, &kb)
 }
 
-// --- Inference Server ---
-
-func (r *KnowledgeBaseReconciler) buildISPVC(kb *kbv1alpha1.KnowledgeBase) *corev1.PersistentVolumeClaim {
-	return &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kb.Name + "-is-pvc",
-			Namespace: kb.Namespace,
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{
-				corev1.ReadWriteOnce,
-			},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse("5Gi"),
-				},
-			},
-		},
+// updatePhase derives the overall phase from the readiness of the managed
+// Deployments and persists it to status. The retriever Deployment may not exist
+// on the first reconcile, so a missing resource is treated as not-ready.
+func (r *KnowledgeBaseReconciler) updatePhase(ctx context.Context, kb *kbv1alpha1.KnowledgeBase) error {
+	isReady, err := r.deploymentReady(ctx, kb.Namespace, kb.Name+"-is-dep")
+	if err != nil {
+		return err
 	}
-}
-
-func (r *KnowledgeBaseReconciler) buildISService(kb *kbv1alpha1.KnowledgeBase) *corev1.Service {
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kb.Name + "-is-svc",
-			Namespace: kb.Namespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"app": kb.Name + "-is",
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "http",
-					Port:       11434,
-					TargetPort: intstr.FromInt(11434),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
-			Type: corev1.ServiceTypeClusterIP,
-		},
+	vdbReady, err := r.deploymentReady(ctx, kb.Namespace, kb.Name+"-vdb-dep")
+	if err != nil {
+		return err
 	}
-}
-
-func (r *KnowledgeBaseReconciler) buildISDeployment(kb *kbv1alpha1.KnowledgeBase) *appsv1.Deployment {
-	labels := map[string]string{"app": kb.Name + "-is"}
-	replicas := int32(1)
-	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kb.Name + "-is-dep",
-			Namespace: kb.Namespace,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-				},
-				Spec: corev1.PodSpec{
-					InitContainers: []corev1.Container{
-						{
-							Name:  "ollama-init",
-							Image: "ollama/ollama:latest",
-							Command: []string{
-								"sh", "-c",
-								"ollama serve & until ollama list > /dev/null 2>&1; do sleep 1; done && ollama pull " + kb.Spec.InferenceServer.Model,
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "model-cache",
-									MountPath: "/root/.ollama",
-								},
-							},
-						},
-					},
-					Containers: []corev1.Container{
-						{
-							Name:  "ollama",
-							Image: "ollama/ollama:latest",
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "http",
-									ContainerPort: 11434,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "model-cache",
-									MountPath: "/root/.ollama",
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "model-cache",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: kb.Name + "-is-pvc",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func (r *KnowledgeBaseReconciler) reconcileInferenceServer(ctx context.Context, kb *kbv1alpha1.KnowledgeBase) error {
-	pvc := r.buildISPVC(kb)
-	svc := r.buildISService(kb)
-	dep := r.buildISDeployment(kb)
-
-	for _, obj := range []client.Object{pvc, svc, dep} {
-		if err := ctrl.SetControllerReference(kb, obj, r.Scheme); err != nil {
-			return err
-		}
-		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
-			return nil
-		}); err != nil {
-			return err
-		}
+	retReady, err := r.deploymentReady(ctx, kb.Namespace, kb.Name+"-retriever-dep")
+	if err != nil {
+		return err
 	}
 
-	return nil
-}
-
-// --- Vector DB (pgvector) ---
-
-func (r *KnowledgeBaseReconciler) buildVDBPVC(kb *kbv1alpha1.KnowledgeBase) *corev1.PersistentVolumeClaim {
-	storage := kb.Spec.VectorDB.Storage
-	if storage == "" {
-		storage = "10Gi"
-	}
-	return &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kb.Name + "-vdb-pvc",
-			Namespace: kb.Namespace,
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{
-				corev1.ReadWriteOnce,
-			},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceStorage: resource.MustParse(storage),
-				},
-			},
-		},
-	}
-}
-
-func (r *KnowledgeBaseReconciler) buildVDBDeployment(kb *kbv1alpha1.KnowledgeBase) *appsv1.Deployment {
-	labels := map[string]string{"app": kb.Name + "-vdb"}
-	replicas := int32(1)
-	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kb.Name + "-vdb-dep",
-			Namespace: kb.Namespace,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: labels,
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: labels,
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:  "pgvector",
-							Image: "pgvector/pgvector:pg16",
-							Ports: []corev1.ContainerPort{
-								{
-									Name:          "postgres",
-									ContainerPort: 5432,
-									Protocol:      corev1.ProtocolTCP,
-								},
-							},
-							Env: []corev1.EnvVar{
-								{
-									Name:  "POSTGRES_DB",
-									Value: "vectordb",
-								},
-								{
-									Name:  "POSTGRES_USER",
-									Value: "pgvector",
-								},
-								{
-									Name:  "POSTGRES_PASSWORD",
-									Value: "pgvector", // TODO: source from a Secret
-								},
-							},
-							VolumeMounts: []corev1.VolumeMount{
-								{
-									Name:      "pgdata",
-									MountPath: "/var/lib/postgresql/data",
-								},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name: "pgdata",
-							VolumeSource: corev1.VolumeSource{
-								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: kb.Name + "-vdb-pvc",
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
-func (r *KnowledgeBaseReconciler) buildVDBService(kb *kbv1alpha1.KnowledgeBase) *corev1.Service {
-	return &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      kb.Name + "-vdb-svc",
-			Namespace: kb.Namespace,
-		},
-		Spec: corev1.ServiceSpec{
-			Selector: map[string]string{
-				"app": kb.Name + "-vdb",
-			},
-			Ports: []corev1.ServicePort{
-				{
-					Name:       "postgres",
-					Port:       5432,
-					TargetPort: intstr.FromInt(5432),
-					Protocol:   corev1.ProtocolTCP,
-				},
-			},
-			Type: corev1.ServiceTypeClusterIP,
-		},
-	}
-}
-
-func (r *KnowledgeBaseReconciler) reconcileVectorDB(ctx context.Context, kb *kbv1alpha1.KnowledgeBase) error {
-	// Managed providers (e.g. aws-rds) need no in-cluster resources.
-	if kb.Spec.VectorDB.Provider != "pgvector" {
-		return nil
+	original := kb.DeepCopy()
+	if isReady && vdbReady && retReady {
+		kb.Status.Phase = kbv1alpha1.PhaseReady
+	} else {
+		kb.Status.Phase = kbv1alpha1.PhasePending
 	}
 
-	pvc := r.buildVDBPVC(kb)
-	dep := r.buildVDBDeployment(kb)
-	svc := r.buildVDBService(kb)
-
-	for _, obj := range []client.Object{pvc, dep, svc} {
-		if err := ctrl.SetControllerReference(kb, obj, r.Scheme); err != nil {
-			return err
-		}
-		if _, err := controllerutil.CreateOrUpdate(ctx, r.Client, obj, func() error {
-			return nil
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return r.Status().Patch(ctx, kb, client.MergeFrom(original))
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *KnowledgeBaseReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kbv1alpha1.KnowledgeBase{}).
+		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }

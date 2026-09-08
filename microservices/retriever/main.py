@@ -5,13 +5,12 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_core.output_parsers import StrOutputParser
 import os
 import time
-import urllib.request
-import urllib.error
-import json
+import httpx
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
+import psycopg
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -34,14 +33,13 @@ CONNECTION_STRING = (
 
 def wait_for_postgres(connection_string: str, timeout: int = 60, interval: int = 2) -> None:
     """Wait until Postgres is accepting connections."""
-    import psycopg
 
     deadline = time.time() + timeout
     attempt = 0
     while True:
         attempt += 1
         try:
-            conn = psycopg.connect(connection_string)
+            conn = psycopg.connect(connection_string.replace("postgresql+psycopg://", "postgresql://", 1))
             conn.close()
             logger.info("Postgres is ready")
             return
@@ -63,10 +61,10 @@ def wait_for_ollama_api(base_url: str, timeout: int = 120, interval: int = 2) ->
     while True:
         attempt += 1
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                if resp.status == 200:
-                    logger.info("Ollama API is ready")
-                    return
+            resp = httpx.get(url, timeout=5)
+            if resp.status_code == 200:
+                logger.info("Ollama API is ready")
+                return
         except Exception as e:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -84,8 +82,8 @@ def wait_for_ollama_model(base_url: str, model: str, interval: int = 5) -> None:
     while True:
         attempt += 1
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
+            resp = httpx.get(url, timeout=5)
+            data = resp.json()
             available = [m.get("name", "") for m in data.get("models", [])]
             # Ollama model names may include a tag (e.g. "nomic-embed-text:latest");
             # match on the base name or the full name.
@@ -104,11 +102,34 @@ def wait_for_ollama_model(base_url: str, model: str, interval: int = 5) -> None:
 def wait_for_services() -> None:
     logger.info("=== Waiting for dependent services ===")
     wait_for_postgres(CONNECTION_STRING)
-    wait_for_ollama_api(OLLAMA_BASE_URL)
-    wait_for_ollama_model(OLLAMA_BASE_URL, EMBED_MODEL)
-    wait_for_ollama_model(OLLAMA_BASE_URL, LLM_MODEL)
+    #wait_for_ollama_api(OLLAMA_BASE_URL)
+    #wait_for_ollama_model(OLLAMA_BASE_URL, EMBED_MODEL)
+    #wait_for_ollama_model(OLLAMA_BASE_URL, LLM_MODEL)
     logger.info("=== All services ready ===")
 
+
+def check_db_connection():
+    """Check if the database connection can be established."""
+    try:
+        conn = psycopg.connect(CONNECTION_STRING.replace("postgresql+psycopg://", "postgresql://", 1))
+        conn.close()
+        logger.info("Database connection successful")
+    except Exception as e:
+        logger.error(f"Database connection failed: {e}")
+        raise
+
+def check_inference_service():
+    """Check if the Ollama inference service is reachable."""
+    try:
+        url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/tags"
+        resp = httpx.get(url, timeout=5)
+        if resp.status_code == 200:
+            logger.info("Ollama inference service is reachable")
+        else:
+            raise ConnectionError(f"Ollama API returned status code {resp.status_code}")
+    except Exception as e:
+        logger.error(f"Ollama inference service check failed: {e}")
+        raise
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -176,6 +197,9 @@ Answer:"""
 
 @app.get("/health")
 async def health():
+    check_db_connection()
+    check_inference_service()
+
     return {"status": "ok"}
 
 @app.get("/query")

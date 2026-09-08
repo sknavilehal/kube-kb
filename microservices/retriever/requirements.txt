@@ -4,6 +4,7 @@ langchain-ollama
 langchain-postgres
 langchain-text-splitters
 psycopg[binary]
+httpx
 python-dotenv
 fastapi
 uvicorn[standard]

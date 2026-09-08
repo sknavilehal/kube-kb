@@ -50,6 +50,11 @@ spec:
                 type: string
               githubRepo:
                 type: string
+              githubTokenSecret:
+                description: |-
+                  GitHubTokenSecret is the name of a Secret in the same namespace whose
+                  "token" key holds a GitHub personal access token (for private repos).
+                type: string
               inferenceServer:
                 properties:
                   model:

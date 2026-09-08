@@ -6,9 +6,7 @@ import tempfile
 import logging
 import os
 import time
-import urllib.request
-import urllib.error
-import json
+import httpx
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,7 +39,7 @@ def wait_for_postgres(connection_string: str, timeout: int = 60, interval: int =
     while True:
         attempt += 1
         try:
-            conn = psycopg.connect(connection_string)
+            conn = psycopg.connect(connection_string.replace("postgresql+psycopg://", "postgresql://", 1))
             conn.close()
             logger.info("Postgres is ready")
             return
@@ -63,10 +61,10 @@ def wait_for_ollama_api(base_url: str, timeout: int = 120, interval: int = 2) ->
     while True:
         attempt += 1
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                if resp.status == 200:
-                    logger.info("Ollama API is ready")
-                    return
+            resp = httpx.get(url, timeout=5)
+            if resp.status_code == 200:
+                logger.info("Ollama API is ready")
+                return
         except Exception as e:
             remaining = deadline - time.time()
             if remaining <= 0:
@@ -84,8 +82,8 @@ def wait_for_ollama_model(base_url: str, model: str, interval: int = 5) -> None:
     while True:
         attempt += 1
         try:
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
+            resp = httpx.get(url, timeout=5)
+            data = resp.json()
             available = [m.get("name", "") for m in data.get("models", [])]
             # Ollama model names may include a tag (e.g. "nomic-embed-text:latest");
             # match on the base name or the full name.

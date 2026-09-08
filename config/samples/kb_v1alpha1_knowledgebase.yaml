@@ -10,5 +10,5 @@ spec:
   vectorDB:
     provider: pgvector
     storage: 10Gi
-  githubRepo: https://github.com/kubekb/kubekb
+  githubRepo: https://github.com/sknavilehal/kube-kb
   githubBranch: main
